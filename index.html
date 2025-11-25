@@ -1,9 +1,463 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>My Website</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSE Stock Divergence Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .card { transition: all 0.3s; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(0,0,0,0.3); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    </style>
 </head>
-<body>
-    <h1>Hello! My website works!</h1>
+<body class="bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 min-h-screen p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-white mb-2">NSE Stock Divergence Scanner</h1>
+            <p class="text-slate-400">Automatic Detection of Bullish & Bearish Divergences in Indian Market</p>
+        </div>
+
+        <!-- Stock List Status -->
+        <div class="bg-slate-800 rounded-lg shadow-xl p-4 mb-4">
+            <div class="flex items-center justify-between flex-wrap gap-3">
+                <div class="flex items-center gap-3">
+                    <div id="statusIndicator" class="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                    <span id="statusText" class="text-white">Initializing...</span>
+                </div>
+                <button onclick="fetchNSEStocks()" id="refreshBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white rounded-lg flex items-center gap-2 transition-colors">
+                    <svg id="refreshIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Refresh Stock List
+                </button>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="bg-slate-800 rounded-lg shadow-xl p-6 mb-6">
+            <div class="grid md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label class="block text-white font-semibold mb-2">Market Segment</label>
+                    <select id="segmentFilter" class="w-full px-4 py-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="fno">F&O Stocks Only</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="block text-white font-semibold mb-2">Divergence Type</label>
+                    <select id="divergenceFilter" class="w-full px-4 py-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all">Show Both</option>
+                        <option value="bullish">Bullish Only</option>
+                        <option value="bearish">Bearish Only</option>
+                    </select>
+                </div>
+            </div>
+
+            <button onclick="startScan()" id="scanBtn" class="w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-600 disabled:to-slate-600 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                </svg>
+                <span id="scanBtnText">Scan Market for Divergences</span>
+            </button>
+            
+            <!-- Progress Bar -->
+            <div id="progressBar" class="hidden mt-4">
+                <div class="flex justify-between text-sm text-slate-400 mb-2">
+                    <span>Scanning stocks...</span>
+                    <span id="progressText">0 / 0</span>
+                </div>
+                <div class="w-full bg-slate-700 rounded-full h-2">
+                    <div id="progressFill" class="bg-blue-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="mt-4 text-sm text-slate-400">
+                <p><strong>Bearish Divergence:</strong> Price ≥ High (14d ago) but RSI &lt; RSI (14d ago) - Potential reversal down</p>
+                <p><strong>Bullish Divergence:</strong> Price ≤ Low (14d ago) but RSI &gt; RSI (14d ago) - Potential reversal up</p>
+            </div>
+        </div>
+
+        <!-- Alert Box -->
+        <div id="alertBox" class="hidden mb-6"></div>
+
+        <!-- Results Summary -->
+        <div id="summary" class="hidden bg-slate-800 rounded-lg p-4 mb-6 text-center">
+            <p class="text-white text-lg">
+                Scanned <strong id="totalScanned">0</strong> stocks | 
+                Found <strong class="text-red-400" id="bearishCount">0</strong> Bearish & 
+                <strong class="text-green-400" id="bullishCount">0</strong> Bullish Divergences
+            </p>
+        </div>
+
+        <!-- Results Grid -->
+        <div id="results" class="grid lg:grid-cols-2 gap-6 hidden">
+            <!-- Bearish -->
+            <div id="bearishSection" class="bg-red-900/20 border border-red-500/30 rounded-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path>
+                        </svg>
+                        <h2 class="text-2xl font-bold text-red-400">Bearish Divergence</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="bg-red-500 text-white px-3 py-1 rounded-full text-sm font-semibold" id="bearishBadge">0</span>
+                        <button onclick="exportToCSV('bearish')" class="p-2 bg-red-600 hover:bg-red-700 rounded-lg" title="Export to CSV">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="bearishList" class="space-y-3 max-h-[600px] overflow-y-auto">
+                    <p class="text-slate-400">No bearish divergence found</p>
+                </div>
+            </div>
+
+            <!-- Bullish -->
+            <div id="bullishSection" class="bg-green-900/20 border border-green-500/30 rounded-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                        </svg>
+                        <h2 class="text-2xl font-bold text-green-400">Bullish Divergence</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-semibold" id="bullishBadge">0</span>
+                        <button onclick="exportToCSV('bullish')" class="p-2 bg-green-600 hover:bg-green-700 rounded-lg" title="Export to CSV">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="bullishList" class="space-y-3 max-h-[600px] overflow-y-auto">
+                    <p class="text-slate-400">No bullish divergence found</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-8 text-center text-slate-500 text-sm">
+            <p><strong>Disclaimer:</strong> This tool is for educational purposes only. Not financial advice.</p>
+            <p class="mt-1">Data sourced from NSE & Yahoo Finance</p>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let stockList = [];
+        let scanResults = { bullish: [], bearish: [] };
+        let isScanning = false;
+
+        // Fetch NSE F&O stocks
+        async function fetchNSEStocks() {
+            const btn = document.getElementById('refreshBtn');
+            const icon = document.getElementById('refreshIcon');
+            const statusText = document.getElementById('statusText');
+            const statusIndicator = document.getElementById('statusIndicator');
+            
+            btn.disabled = true;
+            icon.classList.add('animate-spin');
+            statusText.textContent = 'Fetching F&O stock list from NSE...';
+            statusIndicator.className = 'w-3 h-3 bg-yellow-500 rounded-full animate-pulse';
+            
+            try {
+                // Fetch NSE F&O list with CORS proxy
+                const corsProxy = 'https://api.allorigins.win/raw?url=';
+                const nseUrl = encodeURIComponent('https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv');
+                
+                const response = await fetch(corsProxy + nseUrl);
+                const csvText = await response.text();
+                
+                // Parse CSV
+                const lines = csvText.split('\n');
+                const headers = lines[0].split(',').map(h => h.trim().toUpperCase());
+                const symbolIndex = headers.findIndex(h => h.includes('SYMBOL'));
+                
+                if (symbolIndex === -1) throw new Error('Symbol column not found');
+                
+                const symbols = [];
+                for (let i = 1; i < lines.length; i++) {
+                    const cols = lines[i].split(',');
+                    const symbol = cols[symbolIndex]?.trim().replace(/"/g, '');
+                    
+                    if (symbol && 
+                        !['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SYMBOL'].includes(symbol)) {
+                        symbols.push(symbol);
+                    }
+                }
+                
+                stockList = [...new Set(symbols)]; // Remove duplicates
+                
+                statusText.textContent = `Loaded ${stockList.length} F&O stocks from NSE`;
+                statusIndicator.className = 'w-3 h-3 bg-green-500 rounded-full animate-pulse';
+                
+            } catch (error) {
+                console.error('NSE fetch error:', error);
+                
+                // Fallback: Use curated list
+                stockList = [
+                    'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR', 'ITC', 'SBIN', 
+                    'BHARTIARTL', 'KOTAKBANK', 'LT', 'AXISBANK', 'ASIANPAINT', 'MARUTI', 'BAJFINANCE',
+                    'HCLTECH', 'TITAN', 'SUNPHARMA', 'ULTRACEMCO', 'WIPRO', 'NESTLEIND', 'TATAMOTORS',
+                    'POWERGRID', 'NTPC', 'ONGC', 'TECHM', 'TATASTEEL', 'ADANIENT', 'JSWSTEEL', 'INDUSINDBK',
+                    'COALINDIA', 'HINDALCO', 'BAJAJFINSV', 'DRREDDY', 'GRASIM', 'CIPLA', 'BRITANNIA',
+                    'EICHERMOT', 'DIVISLAB', 'APOLLOHOSP', 'TATACONSUM', 'ADANIPORTS', 'BPCL', 'HEROMOTOCO',
+                    'SHREECEM', 'UPL', 'BAJAJ-AUTO', 'M&M', 'TRENT', 'VEDL', 'DLF', 'DABUR', 'GODREJCP',
+                    'GAIL', 'SIEMENS', 'HAVELLS', 'INDIGO', 'BANKBARODA', 'PNB', 'BOSCHLTD', 'AMBUJACEM',
+                    'PIDILITIND', 'MARICO', 'BERGEPAINT', 'CHOLAFIN', 'SAIL', 'NMDC', 'BEL', 'ZYDUSLIFE',
+                    'LUPIN', 'LICHSGFIN', 'PAGEIND', 'GODREJPROP', 'TORNTPHARM', 'PEL', 'SBILIFE', 
+                    'HDFCLIFE', 'ICICIPRULI', 'MUTHOOTFIN', 'PIIND', 'CANBK', 'IRCTC', 'NAUKRI',
+                    'LTIM', 'TATAPOWER', 'ACC', 'IDFCFIRSTB', 'RECLTD', 'IOC', 'JINDALSTEL', 'VOLTAS'
+                ];
+                
+                statusText.textContent = `Using fallback list: ${stockList.length} F&O stocks`;
+                statusIndicator.className = 'w-3 h-3 bg-yellow-500 rounded-full';
+                
+                showAlert('warning', 'Could not fetch latest NSE data. Using fallback stock list.');
+            } finally {
+                btn.disabled = false;
+                icon.classList.remove('animate-spin');
+            }
+        }
+
+        // Calculate RSI
+        function calculateRSI(prices, period = 14) {
+            if (prices.length < period + 1) return null;
+            
+            let gains = 0, losses = 0;
+            
+            for (let i = 1; i <= period; i++) {
+                const change = prices[i] - prices[i - 1];
+                if (change >= 0) gains += change;
+                else losses -= change;
+            }
+            
+            const avgGain = gains / period;
+            const avgLoss = losses / period;
+            
+            if (avgLoss === 0) return 100;
+            const rs = avgGain / avgLoss;
+            return 100 - (100 / (1 + rs));
+        }
+
+        // Scan market
+        async function startScan() {
+            if (isScanning) return;
+            if (stockList.length === 0) {
+                showAlert('error', 'Please wait for stock list to load');
+                return;
+            }
+            
+            isScanning = true;
+            scanResults = { bullish: [], bearish: [] };
+            
+            const scanBtn = document.getElementById('scanBtn');
+            const scanBtnText = document.getElementById('scanBtnText');
+            const progressBar = document.getElementById('progressBar');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            scanBtn.disabled = true;
+            scanBtnText.textContent = 'Scanning...';
+            progressBar.classList.remove('hidden');
+            document.getElementById('results').classList.add('hidden');
+            
+            let processed = 0;
+            const total = stockList.length;
+            
+            for (const ticker of stockList) {
+                try {
+                    const symbol = `${ticker}.NS`;
+                    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=60d`;
+                    
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    if (!data.chart?.result?.[0]) continue;
+                    
+                    const result = data.chart.result[0];
+                    const quotes = result.indicators.quote[0];
+                    const closes = quotes.close.filter(c => c !== null);
+                    const highs = quotes.high.filter(h => h !== null);
+                    const lows = quotes.low.filter(l => l !== null);
+                    
+                    if (closes.length < 30) continue;
+                    
+                    const latestClose = closes[closes.length - 1];
+                    const high14 = highs[highs.length - 15];
+                    const low14 = lows[lows.length - 15];
+                    
+                    const latestRSI = calculateRSI(closes.slice(-29));
+                    const rsi14 = calculateRSI(closes.slice(-43, -14));
+                    
+                    if (latestRSI === null || rsi14 === null) continue;
+                    
+                    // Bearish Divergence
+                    if (latestClose >= high14 && latestRSI < rsi14) {
+                        scanResults.bearish.push({
+                            ticker,
+                            close: latestClose.toFixed(2),
+                            high14: high14.toFixed(2),
+                            rsi: latestRSI.toFixed(2),
+                            rsi14: rsi14.toFixed(2),
+                            priceChange: (((latestClose - high14) / high14) * 100).toFixed(2),
+                            rsiChange: (latestRSI - rsi14).toFixed(2)
+                        });
+                    }
+                    
+                    // Bullish Divergence
+                    if (latestClose <= low14 && latestRSI > rsi14) {
+                        scanResults.bullish.push({
+                            ticker,
+                            close: latestClose.toFixed(2),
+                            low14: low14.toFixed(2),
+                            rsi: latestRSI.toFixed(2),
+                            rsi14: rsi14.toFixed(2),
+                            priceChange: (((latestClose - low14) / low14) * 100).toFixed(2),
+                            rsiChange: (latestRSI - rsi14).toFixed(2)
+                        });
+                    }
+                    
+                } catch (error) {
+                    console.error(`Error scanning ${ticker}:`, error);
+                }
+                
+                processed++;
+                const percent = (processed / total) * 100;
+                progressFill.style.width = percent + '%';
+                progressText.textContent = `${processed} / ${total}`;
+                
+                // Small delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            displayResults();
+            
+            scanBtn.disabled = false;
+            scanBtnText.textContent = 'Scan Market for Divergences';
+            progressBar.classList.add('hidden');
+            isScanning = false;
+        }
+
+        // Display results
+        function displayResults() {
+            const divergenceFilter = document.getElementById('divergenceFilter').value;
+            
+            document.getElementById('summary').classList.remove('hidden');
+            document.getElementById('results').classList.remove('hidden');
+            
+            document.getElementById('totalScanned').textContent = stockList.length;
+            document.getElementById('bearishCount').textContent = scanResults.bearish.length;
+            document.getElementById('bullishCount').textContent = scanResults.bullish.length;
+            document.getElementById('bearishBadge').textContent = scanResults.bearish.length;
+            document.getElementById('bullishBadge').textContent = scanResults.bullish.length;
+            
+            // Show/hide sections based on filter
+            document.getElementById('bearishSection').style.display = 
+                (divergenceFilter === 'all' || divergenceFilter === 'bearish') ? 'block' : 'none';
+            document.getElementById('bullishSection').style.display = 
+                (divergenceFilter === 'all' || divergenceFilter === 'bullish') ? 'block' : 'none';
+            
+            // Bearish list
+            const bearishList = document.getElementById('bearishList');
+            bearishList.innerHTML = scanResults.bearish.length === 0 
+                ? '<p class="text-slate-400">No bearish divergence found</p>'
+                : scanResults.bearish.map(stock => `
+                    <div class="card bg-slate-800 rounded-lg p-4 border border-slate-700 hover:border-red-500/50">
+                        <div class="flex items-start justify-between mb-2">
+                            <div class="font-bold text-xl text-white">${stock.ticker}</div>
+                            <span class="px-2 py-1 rounded text-xs font-semibold bg-purple-600">F&O</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div class="text-slate-400">Close: <span class="text-white">₹${stock.close}</span></div>
+                            <div class="text-slate-400">High (14d): <span class="text-white">₹${stock.high14}</span></div>
+                            <div class="text-slate-400">RSI: <span class="text-white">${stock.rsi}</span></div>
+                            <div class="text-slate-400">RSI (14d): <span class="text-white">${stock.rsi14}</span></div>
+                            <div class="text-slate-400">Price: <span class="text-green-400">+${stock.priceChange}%</span></div>
+                            <div class="text-slate-400">RSI: <span class="text-red-400">${stock.rsiChange}</span></div>
+                        </div>
+                    </div>
+                `).join('');
+            
+            // Bullish list
+            const bullishList = document.getElementById('bullishList');
+            bullishList.innerHTML = scanResults.bullish.length === 0
+                ? '<p class="text-slate-400">No bullish divergence found</p>'
+                : scanResults.bullish.map(stock => `
+                    <div class="card bg-slate-800 rounded-lg p-4 border border-slate-700 hover:border-green-500/50">
+                        <div class="flex items-start justify-between mb-2">
+                            <div class="font-bold text-xl text-white">${stock.ticker}</div>
+                            <span class="px-2 py-1 rounded text-xs font-semibold bg-purple-600">F&O</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div class="text-slate-400">Close: <span class="text-white">₹${stock.close}</span></div>
+                            <div class="text-slate-400">Low (14d): <span class="text-white">₹${stock.low14}</span></div>
+                            <div class="text-slate-400">RSI: <span class="text-white">${stock.rsi}</span></div>
+                            <div class="text-slate-400">RSI (14d): <span class="text-white">${stock.rsi14}</span></div>
+                            <div class="text-slate-400">Price: <span class="text-red-400">${stock.priceChange}%</span></div>
+                            <div class="text-slate-400">RSI: <span class="text-green-400">+${stock.rsiChange}</span></div>
+                        </div>
+                    </div>
+                `).join('');
+        }
+
+        // Export to CSV
+        function exportToCSV(type) {
+            const data = type === 'bearish' ? scanResults.bearish : scanResults.bullish;
+            if (data.length === 0) return;
+            
+            const headers = Object.keys(data[0]).join(',');
+            const rows = data.map(row => Object.values(row).join(','));
+            const csv = [headers, ...rows].join('\n');
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${type}_divergence_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+        }
+
+        // Show alert
+        function showAlert(type, message) {
+            const alertBox = document.getElementById('alertBox');
+            const colors = {
+                error: 'bg-red-900/50 border-red-500 text-red-200',
+                warning: 'bg-yellow-900/50 border-yellow-500 text-yellow-200',
+                success: 'bg-green-900/50 border-green-500 text-green-200'
+            };
+            
+            alertBox.className = `${colors[type]} border rounded-lg p-4 mb-6 flex items-start gap-3`;
+            alertBox.innerHTML = `
+                <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <div>${message}</div>
+            `;
+            alertBox.classList.remove('hidden');
+            
+            setTimeout(() => alertBox.classList.add('hidden'), 5000);
+        }
+
+        // Event listeners
+        document.getElementById('divergenceFilter').addEventListener('change', () => {
+            if (scanResults.bullish.length > 0 || scanResults.bearish.length > 0) {
+                displayResults();
+            }
+        });
+
+        // Initialize on page load
+        window.onload = () => {
+            fetchNSEStocks();
+        };
+    </script>
 </body>
 </html>
